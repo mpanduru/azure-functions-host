@@ -45,6 +45,18 @@ namespace Microsoft.Azure.WebJobs.Script.DependencyInjection
         public ScriptStartupTypeLocator(string rootScriptPath, ILogger<ScriptStartupTypeLocator> logger, IExtensionBundleManager extensionBundleManager,
             IFunctionMetadataManager functionMetadataManager, IMetricsLogger metricsLogger, IOptionsMonitor<LanguageWorkerOptions> languageWorkerOptions, IOptions<ExtensionRequirementOptions> extensionRequirementOptions)
         {
+            string debugPath = "/tmp/startup-extension-debug.txt";
+            try
+            {
+                using var writer = new StreamWriter(debugPath, append: true);
+
+                writer.WriteLine("=== Starting Extension Startup Processing PART 1===");
+                writer.WriteLine("Atleast it got here...");
+                writer.WriteLine("=== Ending Extension Startup Processing PART 1===");
+            } catch (Exception ex) 
+            {
+                File.AppendAllText("/tmp/startup-extension-debug.txt", $"[EXCEPTION] {ex}\n");
+            }
             _rootScriptPath = rootScriptPath ?? throw new ArgumentNullException(nameof(rootScriptPath));
             _extensionBundleManager = extensionBundleManager ?? throw new ArgumentNullException(nameof(extensionBundleManager));
             _logger = logger;
@@ -75,90 +87,92 @@ namespace Microsoft.Azure.WebJobs.Script.DependencyInjection
 
         public async Task<IEnumerable<Type>> GetExtensionsStartupTypesAsync()
         {
-            string extensionsMetadataPath;
-            FunctionAssemblyLoadContext.ResetSharedContext();
-
-            HashSet<string> bindingsSet = null;
-            var bundleConfigured = _extensionBundleManager.IsExtensionBundleConfigured();
-            bool isLegacyExtensionBundle = _extensionBundleManager.IsLegacyExtensionBundle();
-            bool isPrecompiledFunctionApp = false;
-
-            // dotnet app precompiled -> Do not use bundles
-            var workerConfigs = _languageWorkerOptions.CurrentValue.WorkerConfigs;
-            ExtensionRequirementsInfo extensionRequirements = GetExtensionRequirementsInfo();
-            ImmutableArray<FunctionMetadata> functionMetadataCollection = ImmutableArray<FunctionMetadata>.Empty;
-            if (bundleConfigured)
-            {
-                ExtensionBundleDetails bundleDetails = await _extensionBundleManager.GetExtensionBundleDetails();
-                ValidateBundleRequirements(bundleDetails, extensionRequirements);
-
-                functionMetadataCollection = _functionMetadataManager.GetFunctionMetadata(forceRefresh: true, includeCustomProviders: false, workerConfigs: workerConfigs);
-                bindingsSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                // Generate a Hashset of all the binding types used in the function app
-                foreach (var functionMetadata in functionMetadataCollection)
-                {
-                    foreach (var binding in functionMetadata.Bindings)
-                    {
-                        bindingsSet.Add(binding.Type);
-                    }
-                    isPrecompiledFunctionApp = isPrecompiledFunctionApp || functionMetadata.Language == DotNetScriptTypes.DotNetAssembly;
-                }
-            }
-
-            bool isDotnetIsolatedApp = IsDotnetIsolatedApp(functionMetadataCollection, SystemEnvironment.Instance);
-            bool isDotnetApp = isPrecompiledFunctionApp || isDotnetIsolatedApp;
-            var isLogicApp = SystemEnvironment.Instance.IsLogicApp();
-
-            if (SystemEnvironment.Instance.IsPlaceholderModeEnabled())
-            {
-                // Do not move this.
-                // Calling this log statement in the placeholder mode to avoid jitting during specializtion
-                _logger.ScriptStartNotLoadingExtensionBundle("WARMUP_LOG_ONLY", bundleConfigured, isPrecompiledFunctionApp, isLegacyExtensionBundle, isDotnetIsolatedApp, isLogicApp);
-            }
-
-            string baseProbingPath = null;
-
-            if (bundleConfigured && (!isDotnetApp || isLegacyExtensionBundle || isLogicApp))
-            {
-                extensionsMetadataPath = await _extensionBundleManager.GetExtensionBundleBinPathAsync();
-                if (string.IsNullOrEmpty(extensionsMetadataPath))
-                {
-                    _logger.ScriptStartUpErrorLoadingExtensionBundle();
-                    return Array.Empty<Type>();
-                }
-
-                _logger.ScriptStartUpLoadingExtensionBundle(extensionsMetadataPath);
-            }
-            else
-            {
-                extensionsMetadataPath = Path.Combine(_rootScriptPath, "bin");
-                if (Utility.TryResolveExtensionsMetadataPath(_rootScriptPath, out string resolvedPath, out baseProbingPath))
-                {
-                    extensionsMetadataPath = resolvedPath;
-                }
-                _logger.ScriptStartNotLoadingExtensionBundle(extensionsMetadataPath, bundleConfigured, isPrecompiledFunctionApp, isLegacyExtensionBundle, isDotnetIsolatedApp, isLogicApp);
-            }
-
-            baseProbingPath ??= extensionsMetadataPath;
-            _logger.ScriptStartupResettingLoadContextWithBasePath(baseProbingPath);
-
-            // Reset the load context using the resolved extensions path
-            FunctionAssemblyLoadContext.ResetSharedContext(baseProbingPath);
-
-            string metadataFilePath = Path.Combine(extensionsMetadataPath, ScriptConstants.ExtensionsMetadataFileName);
-
-            // parse the extensions file to get declared startup extensions
-            ExtensionReference[] extensionItems = ParseExtensions(metadataFilePath);
-
-            var startupTypes = new List<Type>();
-
             string debugPath = "/tmp/startup-extension-debug.txt";
             try
             {
                 using var writer = new StreamWriter(debugPath, append: true);
 
                 writer.WriteLine("=== Starting Extension Startup Processing ===");
+                string extensionsMetadataPath;
+                FunctionAssemblyLoadContext.ResetSharedContext();
+
+                HashSet<string> bindingsSet = null;
+                var bundleConfigured = _extensionBundleManager.IsExtensionBundleConfigured();
+                bool isLegacyExtensionBundle = _extensionBundleManager.IsLegacyExtensionBundle();
+                bool isPrecompiledFunctionApp = false;
+                writer.WriteLine($"Bundle configured? {bundleConfigured}");
+                writer.WriteLine($"Legacy extensionbundle: {isLegacyExtensionBundle}");
+
+                // dotnet app precompiled -> Do not use bundles
+                var workerConfigs = _languageWorkerOptions.CurrentValue.WorkerConfigs;
+                ExtensionRequirementsInfo extensionRequirements = GetExtensionRequirementsInfo();
+                ImmutableArray<FunctionMetadata> functionMetadataCollection = ImmutableArray<FunctionMetadata>.Empty;
+                if (bundleConfigured)
+                {
+                    ExtensionBundleDetails bundleDetails = await _extensionBundleManager.GetExtensionBundleDetails();
+                    ValidateBundleRequirements(bundleDetails, extensionRequirements);
+
+                    functionMetadataCollection = _functionMetadataManager.GetFunctionMetadata(forceRefresh: true, includeCustomProviders: false, workerConfigs: workerConfigs);
+                    bindingsSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                    // Generate a Hashset of all the binding types used in the function app
+                    foreach (var functionMetadata in functionMetadataCollection)
+                    {
+                        foreach (var binding in functionMetadata.Bindings)
+                        {
+                            bindingsSet.Add(binding.Type);
+                        }
+                        isPrecompiledFunctionApp = isPrecompiledFunctionApp || functionMetadata.Language == DotNetScriptTypes.DotNetAssembly;
+                    }
+                }
+
+                bool isDotnetIsolatedApp = IsDotnetIsolatedApp(functionMetadataCollection, SystemEnvironment.Instance);
+                bool isDotnetApp = isPrecompiledFunctionApp || isDotnetIsolatedApp;
+                var isLogicApp = SystemEnvironment.Instance.IsLogicApp();
+
+                if (SystemEnvironment.Instance.IsPlaceholderModeEnabled())
+                {
+                    // Do not move this.
+                    // Calling this log statement in the placeholder mode to avoid jitting during specializtion
+                    _logger.ScriptStartNotLoadingExtensionBundle("WARMUP_LOG_ONLY", bundleConfigured, isPrecompiledFunctionApp, isLegacyExtensionBundle, isDotnetIsolatedApp, isLogicApp);
+                }
+
+                string baseProbingPath = null;
+
+                if (bundleConfigured && (!isDotnetApp || isLegacyExtensionBundle || isLogicApp))
+                {
+                    extensionsMetadataPath = await _extensionBundleManager.GetExtensionBundleBinPathAsync();
+                    if (string.IsNullOrEmpty(extensionsMetadataPath))
+                    {
+                        _logger.ScriptStartUpErrorLoadingExtensionBundle();
+                        return Array.Empty<Type>();
+                    }
+
+                    _logger.ScriptStartUpLoadingExtensionBundle(extensionsMetadataPath);
+                }
+                else
+                {
+                    extensionsMetadataPath = Path.Combine(_rootScriptPath, "bin");
+                    if (Utility.TryResolveExtensionsMetadataPath(_rootScriptPath, out string resolvedPath, out baseProbingPath))
+                    {
+                        extensionsMetadataPath = resolvedPath;
+                    }
+                    _logger.ScriptStartNotLoadingExtensionBundle(extensionsMetadataPath, bundleConfigured, isPrecompiledFunctionApp, isLegacyExtensionBundle, isDotnetIsolatedApp, isLogicApp);
+                }
+
+                baseProbingPath ??= extensionsMetadataPath;
+                writer.WriteLine($"Probing path is {baseProbingPath}");
+                _logger.ScriptStartupResettingLoadContextWithBasePath(baseProbingPath);
+
+                // Reset the load context using the resolved extensions path
+                FunctionAssemblyLoadContext.ResetSharedContext(baseProbingPath);
+
+                string metadataFilePath = Path.Combine(extensionsMetadataPath, ScriptConstants.ExtensionsMetadataFileName);
+
+                // parse the extensions file to get declared startup extensions
+                ExtensionReference[] extensionItems = ParseExtensions(metadataFilePath);
+
+                var startupTypes = new List<Type>();
                 foreach (var extensionItem in extensionItems)
                 {
                     writer.WriteLine($"Extension Name: {extensionItem.Name ?? extensionItem.TypeName}");
@@ -249,15 +263,16 @@ namespace Microsoft.Azure.WebJobs.Script.DependencyInjection
                     }
                     writer.WriteLine("");
                 }
+
+                ValidateExtensionRequirements(startupTypes, extensionRequirements);
+
+                return startupTypes;
             }
             catch (Exception ex)
             {
                 File.AppendAllText("/tmp/startup-extension-debug.txt", $"[EXCEPTION] {ex}\n");
+                return null;
             }
-
-            ValidateExtensionRequirements(startupTypes, extensionRequirements);
-
-            return startupTypes;
         }
 
         private ExtensionReference[] ParseExtensions(string metadataFilePath)
