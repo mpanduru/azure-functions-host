@@ -190,7 +190,7 @@ namespace Microsoft.Azure.WebJobs.Script.Description
                     writer.WriteLine("=== TryParseTriggerParameter: Binding Provider Loop ===");
                     writer.WriteLine($"BindingContext Name: {bindingContext.Name}");
                     writer.WriteLine($"Binding Type: {metadata.Type}");
-                    writer.WriteLine($"Raw Keys: {string.Join(", ", metadata.Raw?.Keys ?? new string[0])}");
+                    writer.WriteLine($"Raw Keys: {string.Join(", ", metadata.Raw?.Properties().Select(p => p.Name) ?? new string[0])}");
 
                     foreach (var provider in BindingProviders)
                     {
