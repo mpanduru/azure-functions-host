@@ -126,6 +126,35 @@ namespace Microsoft.Azure.WebJobs.Script.Description
 
         protected virtual ParameterDescriptor CreateTriggerParameter(BindingMetadata triggerMetadata, Type parameterType = null)
         {
+            // BY HERE
+            string debugPath = "/tmp/trigger-binding-debug.txt"; // use /tmp or /home/logs if you want it persisted
+
+            try
+            {
+                using (var writer = new StreamWriter(debugPath, append: true))
+                {
+                    writer.WriteLine("=== CreateTriggerParameter ===");
+                    writer.WriteLine($"BindingMetadata.Type: {triggerMetadata?.Type}");
+                    writer.WriteLine($"BindingMetadata.Name: {triggerMetadata?.Name}");
+                    writer.WriteLine($"Raw Metadata Keys: {string.Join(", ", triggerMetadata?.Raw?.Keys ?? new string[0])}");
+
+                    if (parameterType != null)
+                    {
+                        writer.WriteLine($"Provided Parameter Type: {parameterType.FullName}");
+                    }
+                    else
+                    {
+                        writer.WriteLine("No parameter type provided.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Avoid crashing the host — silently swallow or route to console
+                Console.WriteLine($"Error writing debug log: {ex}");
+            }
+            // UNTIL HERE
+
             if (TryParseTriggerParameter(triggerMetadata, out ParameterDescriptor triggerParameter, parameterType))
             {
                 triggerParameter.IsTrigger = true;
@@ -151,12 +180,45 @@ namespace Microsoft.Azure.WebJobs.Script.Description
             }
 
             ScriptBinding binding = null;
-            foreach (var provider in BindingProviders)
+            // FROM HERE
+
+            string debugPath = "/tmp/trigger-binding-debug.txt"; // Or /home/logs/... if preferred
+            try
             {
-                if (provider.TryCreate(bindingContext, out binding))
+                using (var writer = new StreamWriter(debugPath, append: true))
                 {
-                    break;
+                    writer.WriteLine("=== TryParseTriggerParameter: Binding Provider Loop ===");
+                    writer.WriteLine($"BindingContext Name: {bindingContext.Name}");
+                    writer.WriteLine($"Binding Type: {metadata.Type}");
+                    writer.WriteLine($"Raw Keys: {string.Join(", ", metadata.Raw?.Keys ?? new string[0])}");
+
+                    foreach (var provider in BindingProviders)
+                    {
+                        string providerName = provider.GetType().FullName;
+                        bool success = false;
+                        if (provider.TryCreate(bindingContext, out binding))
+                        {
+                            success = true;
+                            break;
+                        }
+                        writer.WriteLine($"Provider: {providerName}, Matched: {success}");
+
+                        if (success)
+                        {
+                            writer.WriteLine("-> This provider matched and binding will be used.");
+                        }
+                    }
+                    if (binding == null)
+                    {
+                        writer.WriteLine("No provider matched.");
+                    }
+
+                    writer.WriteLine(""); // Blank line for readability
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error writing binding provider debug log: {ex}");
             }
 
             if (binding != null)
