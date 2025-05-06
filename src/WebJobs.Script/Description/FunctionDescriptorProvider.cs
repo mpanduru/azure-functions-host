@@ -136,7 +136,7 @@ namespace Microsoft.Azure.WebJobs.Script.Description
                     writer.WriteLine("=== CreateTriggerParameter ===");
                     writer.WriteLine($"BindingMetadata.Type: {triggerMetadata?.Type}");
                     writer.WriteLine($"BindingMetadata.Name: {triggerMetadata?.Name}");
-                    writer.WriteLine($"Raw Metadata Keys: {string.Join(", ", triggerMetadata?.Raw?.Keys ?? new string[0])}");
+                    writer.WriteLine($"Raw Metadata Keys: {string.Join(", ", triggerMetadata.Raw?.Properties().Select(p => p.Name) ?? new string[0])}");
 
                     if (parameterType != null)
                     {
