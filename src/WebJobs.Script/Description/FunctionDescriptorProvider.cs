@@ -43,6 +43,58 @@ namespace Microsoft.Azure.WebJobs.Script.Description
             // parse the bindings
             Collection<FunctionBinding> inputBindings = FunctionBinding.GetBindings(Config, BindingProviders, functionMetadata.InputBindings, FileAccess.Read);
             Collection<FunctionBinding> outputBindings = FunctionBinding.GetBindings(Config, BindingProviders, functionMetadata.OutputBindings, FileAccess.Write);
+            string debugPath = "/tmp/get-bindings-inputs-debug.txt";
+            try
+            {
+                using (var writer = new StreamWriter(debugPath, append: true))
+                {
+                    writer.WriteLine("=== Logging Parameters for GetBindings ===");
+
+                    writer.WriteLine("ScriptJobHostOptions:");
+                    writer.WriteLine($" - RootScriptPath: {Config.RootScriptPath}");
+                    writer.WriteLine($" - RootLogPath: {Config.RootLogPath}");
+                    writer.WriteLine($" - InstanceId: {Config.InstanceId}");
+                    writer.WriteLine($" - FileLoggingMode: {Config.FileLoggingMode}");
+                    writer.WriteLine($" - FunctionTimeout: {Config.FunctionTimeout}");
+                    writer.WriteLine($" - IsSelfHost: {Config.IsSelfHost}");
+                    writer.WriteLine($" - IsReadOnly: {Config.IsFileSystemReadOnly}");
+                    writer.WriteLine($" - IsStandbyConfiguration: {Config.IsStandbyConfiguration}");
+                    writer.WriteLine($" - IsDefaultHostConfig: {Config.IsDefaultHostConfig}");
+                    writer.WriteLine($" - SendCanceledInvocationsToWorker: {Config.SendCanceledInvocationsToWorker}");
+                    writer.WriteLine($" - MetadataProviderTimeout: {Config.MetadataProviderTimeout}");
+
+                    writer.WriteLine("WatchDirectories:");
+                    foreach (var dir in Config.WatchDirectories ?? Enumerable.Empty<string>())
+                    {
+                        writer.WriteLine($"   - {dir}");
+                    }
+
+                    writer.WriteLine("WatchFiles:");
+                    foreach (var file in Config.WatchFiles ?? Enumerable.Empty<string>())
+                    {
+                        writer.WriteLine($"   - {file}");
+                    }
+
+                    writer.WriteLine("Functions:");
+                    foreach (var func in Config.Functions ?? Enumerable.Empty<string>())
+                    {
+                        writer.WriteLine($"   - {func}");
+                    }
+
+                    writer.WriteLine();
+                    writer.WriteLine("BindingProviders:");
+                    foreach (var provider in BindingProviders)
+                    {
+                        writer.WriteLine($" - {provider.GetType().FullName}");
+                    }
+
+                    writer.WriteLine(); // Add a line break between log entries
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error writing GetBindings parameter log: {ex}");
+            }
             VerifyResolvedBindings(functionMetadata, inputBindings, outputBindings);
 
             BindingMetadata triggerMetadata = functionMetadata.InputBindings.FirstOrDefault(p => p.IsTrigger);
@@ -75,15 +127,49 @@ namespace Microsoft.Azure.WebJobs.Script.Description
 
         public void VerifyResolvedBindings(FunctionMetadata functionMetadata, IEnumerable<FunctionBinding> inputBindings, IEnumerable<FunctionBinding> outputBindings)
         {
-            IEnumerable<string> bindingsFromMetadata = functionMetadata.InputBindings.Union(functionMetadata.OutputBindings).Select(f => f.Type);
-            IEnumerable<string> resolvedBindings = inputBindings.Union(outputBindings).Select(b => b.Metadata.Type);
-            IEnumerable<string> unresolvedBindings = bindingsFromMetadata.Except(resolvedBindings);
-
-            if (unresolvedBindings.Any())
+            // FROM HERE
+            string debugPath = "/tmp/verify-bindings-debug.txt";
+            try
             {
-                string allUnresolvedBindings = string.Join(", ", unresolvedBindings);
-                string errorMessage = CreateBindingError(allUnresolvedBindings);
-                throw new FunctionConfigurationException(errorMessage);
+                using (var writer = new StreamWriter(debugPath, append: true))
+                {
+                    writer.WriteLine("=== VerifyResolvedBindings ===");
+                    writer.WriteLine($"Function: {functionMetadata.Name}");
+
+                    writer.WriteLine("Declared bindings (from metadata):");
+                    foreach (var b in functionMetadata.InputBindings.Concat(functionMetadata.OutputBindings))
+                    {
+                        writer.WriteLine($" - {b.Type}");
+                    }
+
+                    writer.WriteLine("Resolved bindings:");
+                    foreach (var b in inputBindings.Concat(outputBindings))
+                    {
+                        writer.WriteLine($" - {b.Metadata.Type}");
+                    }
+
+                    IEnumerable<string> bindingsFromMetadata = functionMetadata.InputBindings.Union(functionMetadata.OutputBindings).Select(f => f.Type);
+                    IEnumerable<string> resolvedBindings = inputBindings.Union(outputBindings).Select(b => b.Metadata.Type);
+                    IEnumerable<string> unresolvedBindings = bindingsFromMetadata.Except(resolvedBindings);
+
+                    if (unresolvedBindings.Any())
+                    {
+                        writer.WriteLine("Unresolved bindings:");
+                        foreach (var u in unresolvedBindings)
+                        {
+                            writer.WriteLine($" - {u}");
+                        }
+                        string allUnresolvedBindings = string.Join(", ", unresolvedBindings);
+                        string errorMessage = CreateBindingError(allUnresolvedBindings);
+                        throw new FunctionConfigurationException(errorMessage);
+                    }
+
+                    writer.WriteLine("");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Logging error: {ex}");
             }
         }
 
