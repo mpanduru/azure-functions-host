@@ -153,71 +153,106 @@ namespace Microsoft.Azure.WebJobs.Script.DependencyInjection
 
             var startupTypes = new List<Type>();
 
-            foreach (var extensionItem in extensionItems)
+            string debugPath = "/tmp/startup-extension-debug.txt";
+            try
             {
-                // We need to explicitly ignore ApplicationInsights extension
-                if (extensionItem.TypeName.Equals(ApplicationInsightsStartupType, StringComparison.Ordinal))
-                {
-                    _logger.LogWarning("The Application Insights extension is no longer supported. Package references to Microsoft.Azure.WebJobs.Extensions.ApplicationInsights can be removed.");
-                    continue;
-                }
+                using var writer = new StreamWriter(debugPath, append: true);
 
-                if (!bundleConfigured
-                    || extensionItem.Bindings.Count == 0
-                    || extensionItem.Bindings.Intersect(bindingsSet, StringComparer.OrdinalIgnoreCase).Any())
+                writer.WriteLine("=== Starting Extension Startup Processing ===");
+                foreach (var extensionItem in extensionItems)
                 {
-                    string startupExtensionName = extensionItem.Name ?? extensionItem.TypeName;
-                    _logger.ScriptStartUpLoadingStartUpExtension(startupExtensionName);
+                    writer.WriteLine($"Extension Name: {extensionItem.Name ?? extensionItem.TypeName}");
+                    writer.WriteLine($"Extension Type: {extensionItem.TypeName ?? extensionItem.Name}");
+                    writer.WriteLine($" - TypeName: {extensionItem.TypeName}");
+                    writer.WriteLine($" - HintPath: {extensionItem.HintPath}");
+                    writer.WriteLine($" - Bindings: {string.Join(", ", extensionItem.Bindings ?? Array.Empty<string>())}");
+                    // We need to explicitly ignore ApplicationInsights extension
+                    if (extensionItem.TypeName.Equals(ApplicationInsightsStartupType, StringComparison.Ordinal))
+                    {
+                        _logger.LogWarning("The Application Insights extension is no longer supported. Package references to Microsoft.Azure.WebJobs.Extensions.ApplicationInsights can be removed.");
+                        writer.WriteLine(" - Skipping Application Insights extension.");
+                        continue;
+                    }
 
-                    // load the Type for each startup extension into the function assembly load context
-                    Type extensionType = Type.GetType(extensionItem.TypeName,
-                        assemblyName =>
-                        {
-                            if (_builtinExtensionAssemblies.Contains(assemblyName.Name, StringComparer.OrdinalIgnoreCase))
+                    if (!bundleConfigured
+                        || extensionItem.Bindings.Count == 0
+                        || extensionItem.Bindings.Intersect(bindingsSet, StringComparer.OrdinalIgnoreCase).Any())
+                    {
+                        writer.WriteLine(" - Proceeding with type resolution...");
+                        string startupExtensionName = extensionItem.Name ?? extensionItem.TypeName;
+                        _logger.ScriptStartUpLoadingStartUpExtension(startupExtensionName);
+
+                        // load the Type for each startup extension into the function assembly load context
+                        Type extensionType = Type.GetType(extensionItem.TypeName,
+                            assemblyName =>
                             {
-                                _logger.ScriptStartUpBelongExtension(extensionItem.TypeName);
+                                writer.WriteLine($"   [Assembly Resolver] Requested: {assemblyName.Name}");
+                                if (_builtinExtensionAssemblies.Contains(assemblyName.Name, StringComparer.OrdinalIgnoreCase))
+                                {
+                                    _logger.ScriptStartUpBelongExtension(extensionItem.TypeName);
+                                    writer.WriteLine($"   [Assembly Resolver] Skipping built-in: {assemblyName.Name}");
+                                    return null;
+                                }
+
+                                string path = extensionItem.HintPath;
+                                if (string.IsNullOrEmpty(path))
+                                {
+                                    path = assemblyName.Name + ".dll";
+                                }
+
+                                var hintUri = new Uri(path, UriKind.RelativeOrAbsolute);
+                                if (!hintUri.IsAbsoluteUri)
+                                {
+                                    path = Path.Combine(extensionsMetadataPath, path);
+                                }
+                                writer.WriteLine($"   [Assembly Resolver] Resolved path: {path}");
+
+                                if (File.Exists(path))
+                                {
+                                    var loadedAsm = FunctionAssemblyLoadContext.Shared.LoadFromAssemblyPath(path, true);
+                                    writer.WriteLine($"   [Assembly Resolver] Successfully loaded: {loadedAsm.FullName}");
+                                    return loadedAsm;
+                                }
+                                writer.WriteLine($"   [Assembly Resolver] File not found at path: {path}");
                                 return null;
-                            }
-
-                            string path = extensionItem.HintPath;
-                            if (string.IsNullOrEmpty(path))
+                            },
+                            (assembly, typeName, ignoreCase) =>
                             {
-                                path = assemblyName.Name + ".dll";
-                            }
+                                if (assembly == null)
+                                {
+                                    writer.WriteLine($"   [Type Resolver] Assembly is null for type: {typeName}");
+                                }
+                                _logger.ScriptStartUpLoadedExtension(startupExtensionName, assembly.GetName().Version.ToString());
+                                var type = assembly?.GetType(typeName, false, ignoreCase);
+                                writer.WriteLine(type != null
+                                        ? $"   [Type Resolver] Found: {type.FullName}"
+                                        : $"   [Type Resolver] Not found: {typeName} in {assembly.FullName}");
+                                return type;
+                            }, false, true);
 
-                            var hintUri = new Uri(path, UriKind.RelativeOrAbsolute);
-                            if (!hintUri.IsAbsoluteUri)
-                            {
-                                path = Path.Combine(extensionsMetadataPath, path);
-                            }
-
-                            if (File.Exists(path))
-                            {
-                                return FunctionAssemblyLoadContext.Shared.LoadFromAssemblyPath(path, true);
-                            }
-
-                            return null;
-                        },
-                        (assembly, typeName, ignoreCase) =>
+                        if (extensionType == null)
                         {
-                            _logger.ScriptStartUpLoadedExtension(startupExtensionName, assembly.GetName().Version.ToString());
-                            return assembly?.GetType(typeName, false, ignoreCase);
-                        }, false, true);
+                            _logger.ScriptStartUpUnableToLoadExtension(startupExtensionName, extensionItem.TypeName);
+                            writer.WriteLine(" - ERROR: Failed to load extension type.");
+                            continue;
+                        }
 
-                    if (extensionType == null)
-                    {
-                        _logger.ScriptStartUpUnableToLoadExtension(startupExtensionName, extensionItem.TypeName);
-                        continue;
+                        if (!typeof(IWebJobsStartup).IsAssignableFrom(extensionType) && !typeof(IWebJobsConfigurationStartup).IsAssignableFrom(extensionType))
+                        {
+                            writer.WriteLine(" - ERROR: Loaded type does not implement IWebJobsStartup or IWebJobsConfigurationStartup.");
+                            _logger.ScriptStartUpTypeIsNotValid(extensionItem.TypeName, nameof(IWebJobsStartup), nameof(IWebJobsConfigurationStartup));
+                            continue;
+                        }
+
+                        writer.WriteLine(" - ERROR: Loaded type does not implement IWebJobsStartup or IWebJobsConfigurationStartup.");
+                        startupTypes.Add(extensionType);
                     }
-
-                    if (!typeof(IWebJobsStartup).IsAssignableFrom(extensionType) && !typeof(IWebJobsConfigurationStartup).IsAssignableFrom(extensionType))
-                    {
-                        _logger.ScriptStartUpTypeIsNotValid(extensionItem.TypeName, nameof(IWebJobsStartup), nameof(IWebJobsConfigurationStartup));
-                        continue;
-                    }
-
-                    startupTypes.Add(extensionType);
+                    writer.WriteLine("");
                 }
+            }
+            catch (Exception ex)
+            {
+                File.AppendAllText("/tmp/startup-extension-debug.txt", $"[EXCEPTION] {ex}\n");
             }
 
             ValidateExtensionRequirements(startupTypes, extensionRequirements);
