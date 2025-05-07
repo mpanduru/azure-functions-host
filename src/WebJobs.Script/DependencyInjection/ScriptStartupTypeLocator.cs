@@ -107,57 +107,74 @@ namespace Microsoft.Azure.WebJobs.Script.DependencyInjection
                 var workerConfigs = _languageWorkerOptions.CurrentValue.WorkerConfigs;
                 ExtensionRequirementsInfo extensionRequirements = GetExtensionRequirementsInfo();
                 ImmutableArray<FunctionMetadata> functionMetadataCollection = ImmutableArray<FunctionMetadata>.Empty;
+                writer.WriteLine($"Gets here");
                 if (bundleConfigured)
                 {
                     ExtensionBundleDetails bundleDetails = await _extensionBundleManager.GetExtensionBundleDetails();
                     ValidateBundleRequirements(bundleDetails, extensionRequirements);
+                    writer.WriteLine($"Gets here 2");
 
                     functionMetadataCollection = _functionMetadataManager.GetFunctionMetadata(forceRefresh: true, includeCustomProviders: false, workerConfigs: workerConfigs);
                     bindingsSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+                    writer.WriteLine($"Gets here 3");
+
                     // Generate a Hashset of all the binding types used in the function app
                     foreach (var functionMetadata in functionMetadataCollection)
                     {
+
+                        writer.WriteLine($"Gets here 4");
                         foreach (var binding in functionMetadata.Bindings)
                         {
                             bindingsSet.Add(binding.Type);
                         }
+                        writer.WriteLine($"Gets here 5");
                         isPrecompiledFunctionApp = isPrecompiledFunctionApp || functionMetadata.Language == DotNetScriptTypes.DotNetAssembly;
                     }
                 }
 
+                writer.WriteLine($"Gets here 6");
                 bool isDotnetIsolatedApp = IsDotnetIsolatedApp(functionMetadataCollection, SystemEnvironment.Instance);
                 bool isDotnetApp = isPrecompiledFunctionApp || isDotnetIsolatedApp;
                 var isLogicApp = SystemEnvironment.Instance.IsLogicApp();
+                writer.WriteLine($"Gets here 7");
 
                 if (SystemEnvironment.Instance.IsPlaceholderModeEnabled())
                 {
+                    writer.WriteLine($"Gets here 8");
                     // Do not move this.
                     // Calling this log statement in the placeholder mode to avoid jitting during specializtion
                     _logger.ScriptStartNotLoadingExtensionBundle("WARMUP_LOG_ONLY", bundleConfigured, isPrecompiledFunctionApp, isLegacyExtensionBundle, isDotnetIsolatedApp, isLogicApp);
                 }
 
                 string baseProbingPath = null;
+                writer.WriteLine($"Gets here 9");
 
                 if (bundleConfigured && (!isDotnetApp || isLegacyExtensionBundle || isLogicApp))
                 {
+                    writer.WriteLine($"Gets here 10");
                     extensionsMetadataPath = await _extensionBundleManager.GetExtensionBundleBinPathAsync();
                     if (string.IsNullOrEmpty(extensionsMetadataPath))
                     {
+                        writer.WriteLine($"Gets here 11");
                         _logger.ScriptStartUpErrorLoadingExtensionBundle();
                         return Array.Empty<Type>();
                     }
 
                     _logger.ScriptStartUpLoadingExtensionBundle(extensionsMetadataPath);
+                    writer.WriteLine($"Gets here 12");
                 }
                 else
                 {
+                    writer.WriteLine($"Gets here 13");
                     extensionsMetadataPath = Path.Combine(_rootScriptPath, "bin");
                     if (Utility.TryResolveExtensionsMetadataPath(_rootScriptPath, out string resolvedPath, out baseProbingPath))
                     {
                         extensionsMetadataPath = resolvedPath;
+                        writer.WriteLine($"Gets here 14");
                     }
                     _logger.ScriptStartNotLoadingExtensionBundle(extensionsMetadataPath, bundleConfigured, isPrecompiledFunctionApp, isLegacyExtensionBundle, isDotnetIsolatedApp, isLogicApp);
+                    writer.WriteLine($"Gets here 15");
                 }
 
                 baseProbingPath ??= extensionsMetadataPath;
