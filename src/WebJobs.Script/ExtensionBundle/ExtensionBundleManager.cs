@@ -163,8 +163,14 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
                         writer.WriteLine($" - Directory exists: {path}");
                         var bundleDirectories = FileUtility.EnumerateDirectories(path);
                         writer.WriteLine($" - Found {bundleDirectories.Count()} subdirectories");
+                        var bundleDirectoriesList = bundleDirectories.ToList();
+                        foreach (var dir in bundleDirectoriesList)
+                        {
+                            writer.WriteLine($"   - {dir}");
+                        }
+                        writer.WriteLine($" Calling BestVersion Match with args: {_options.Version}, {bundleDirectories}, {_options.Id}, {_configOption} at timestamp: {DateTime.UtcNow:o}");
                         string version = FindBestVersionMatch(_options.Version, bundleDirectories, _options.Id, _configOption);
-                        writer.WriteLine($" - Best version match: {version}");
+                        writer.WriteLine($" - Best version match: {version} at timestamp {DateTime.UtcNow:o}");
 
                         if (!string.IsNullOrEmpty(version))
                         {
@@ -304,6 +310,7 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
             try
             {
                 using var writer = new StreamWriter(debugPath, append: true);
+                writer.WriteLine($"Started FindBestVersionMatch function at timestamp: {DateTime.UtcNow:o}");
                 writer.WriteLine("=== FindBestVersionMatch ===");
                 writer.WriteLine($"Bundle ID: {bundleId}");
                 writer.WriteLine($"Version range: {versionRange?.ToNormalizedString() ?? "(null)"}");
@@ -312,7 +319,7 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
                 {
                     writer.WriteLine($" - {v}");
                 }
-            
+
                 var bundleVersions = versions.Select(p =>
                 {
                     var dirName = Path.GetFileName(p);
@@ -367,9 +374,11 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
                 }
 
                 writer.WriteLine($"Final resolved version: {matchingVersion}");
+                string returnedMatchingVersion = matchingVersion?.ToString();
+                writer.WriteLine($"Returned version: {returnedMatchingVersion}");
+                writer.WriteLine($"Ended FindBestVersionMatch function at timestamp: {DateTime.UtcNow:o}");
                 writer.WriteLine();
-                // return matchingVersion?.ToString();
-                return matchingVersion.ToNormalizedString();
+                return returnedMatchingVersion;
             } catch (Exception ex) {
                 File.AppendAllText(debugPath, $"[EXCEPTION] {DateTime.UtcNow:o} - {ex}\n");
                 return null;
