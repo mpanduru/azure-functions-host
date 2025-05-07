@@ -95,61 +95,109 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
 
         private async Task<string> GetBundle(HttpClient httpClient)
         {
-            bool bundleFound = TryLocateExtensionBundle(out string bundlePath);
-
-            if ((_environment.IsAppService()
-                || _environment.IsCoreTools()
-                || _environment.IsAnyLinuxConsumption()
-                || _environment.IsContainer())
-                && (!bundleFound || _options.EnsureLatest))
+            string debugPath = "/tmp/get-bundle.txt";
+            try
             {
-                string latestBundleVersion = await GetLatestMatchingBundleVersionAsync(httpClient);
-                if (string.IsNullOrEmpty(latestBundleVersion))
-                {
-                    return null;
-                }
+                using var writer = new StreamWriter(debugPath, append: true);
 
-                _extensionBundleVersion = latestBundleVersion;
-                bundlePath = await DownloadExtensionBundleAsync(latestBundleVersion, httpClient);
+                writer.WriteLine("=== Starting Get Bundle Process===");
+                bool bundleFound = TryLocateExtensionBundle(out string bundlePath);
+                writer.WriteLine($"TryLocateExtensionBundle: {bundleFound}, path: {bundlePath}");
+
+                writer.WriteLine($"Environment check:");
+                writer.WriteLine($" - IsAppService: {_environment.IsAppService()}");
+                writer.WriteLine($" - IsCoreTools: {_environment.IsCoreTools()}");
+                writer.WriteLine($" - IsAnyLinuxConsumption: {_environment.IsAnyLinuxConsumption()}");
+                writer.WriteLine($" - IsContainer: {_environment.IsContainer()}");
+                writer.WriteLine($" - EnsureLatest: {_options.EnsureLatest}");
+
+                if ((_environment.IsAppService()
+                    || _environment.IsCoreTools()
+                    || _environment.IsAnyLinuxConsumption()
+                    || _environment.IsContainer())
+                    && (!bundleFound || _options.EnsureLatest))
+                {
+                    writer.WriteLine($" - Bundle Needs Download.");
+                    string latestBundleVersion = await GetLatestMatchingBundleVersionAsync(httpClient);
+                    writer.WriteLine($" Latest Matching Bundle Version is {latestBundleVersion}");
+                    if (string.IsNullOrEmpty(latestBundleVersion))
+                    {
+                        writer.WriteLine($" Latest Matching Bundle Version is null");
+                        return null;
+                    }
+
+                    _extensionBundleVersion = latestBundleVersion;
+                    bundlePath = await DownloadExtensionBundleAsync(latestBundleVersion, httpClient);
+                }
+                return bundlePath;
+            } 
+            catch (Exception ex) {
+                File.AppendAllText("/tmp/startup-extension-debug.txt", $"[EXCEPTION] {ex}\n");
+                return null;
             }
-            return bundlePath;
         }
 
         internal bool TryLocateExtensionBundle(out string bundlePath)
         {
+            string debugPath = "/tmp/bundle-debug.txt";
             bundlePath = null;
             string bundleMetatdataFile = null;
-            var paths = new List<string>(_options.ProbingPaths)
-                {
-                    _options.DownloadPath
-                };
-
-            for (int i = 0; i < paths.Count; i++)
+            try
             {
-                var path = paths[i];
-                _logger.LocateExtensionBundle(_options.Id, path);
-                if (FileUtility.DirectoryExists(path))
-                {
-                    var bundleDirectories = FileUtility.EnumerateDirectories(path);
-                    string version = FindBestVersionMatch(_options.Version, bundleDirectories, _options.Id, _configOption);
-
-                    if (!string.IsNullOrEmpty(version))
+                using var writer = new StreamWriter(debugPath, append: true);
+                writer.WriteLine("=== TryLocateExtensionBundle ===");
+                writer.WriteLine($"Bundle ID: {_options.Id}");
+                writer.WriteLine($"Probing paths: {string.Join(", ", _options.ProbingPaths.Append(_options.DownloadPath))}");
+                var paths = new List<string>(_options.ProbingPaths)
                     {
-                        bundlePath = Path.Combine(path, version);
-                        bundleMetatdataFile = Path.Combine(bundlePath, ScriptConstants.ExtensionBundleMetadataFile);
-                        if (!string.IsNullOrEmpty(bundleMetatdataFile) && FileUtility.FileExists(bundleMetatdataFile))
+                        _options.DownloadPath
+                    };
+
+                for (int i = 0; i < paths.Count; i++)
+                {
+                    var path = paths[i];
+                    writer.WriteLine($"Checking path: {path}");
+                    _logger.LocateExtensionBundle(_options.Id, path);
+                    if (FileUtility.DirectoryExists(path))
+                    {
+                        writer.WriteLine($" - Directory exists: {path}");
+                        var bundleDirectories = FileUtility.EnumerateDirectories(path);
+                        writer.WriteLine($" - Found {bundleDirectories.Count()} subdirectories");
+                        string version = FindBestVersionMatch(_options.Version, bundleDirectories, _options.Id, _configOption);
+                        writer.WriteLine($" - Best version match: {version}");
+
+                        if (!string.IsNullOrEmpty(version))
                         {
-                            _logger.ExtensionBundleFound(bundlePath);
-                            break;
+                            bundlePath = Path.Combine(path, version);
+                            bundleMetatdataFile = Path.Combine(bundlePath, ScriptConstants.ExtensionBundleMetadataFile);
+                            writer.WriteLine($" - Bundle path candidate: {bundlePath}");
+                            writer.WriteLine($" - Metadata file expected at: {bundleMetatdataFile}");
+                            if (!string.IsNullOrEmpty(bundleMetatdataFile) && FileUtility.FileExists(bundleMetatdataFile))
+                            {
+                                _logger.ExtensionBundleFound(bundlePath);
+                                writer.WriteLine(" - Bundle metadata file found. SUCCESS.");
+                                break;
+                            }
+                            else
+                            {
+                                writer.WriteLine(" - Metadata file missing or unreadable.");
+                                bundlePath = null;
+                            }
                         }
-                        else
-                        {
-                            bundlePath = null;
+                        else {
+                            writer.WriteLine(" - No matching version found.");
                         }
+                    } else {
+                        writer.WriteLine($" - Directory does not exist: {path}");
                     }
                 }
+                writer.WriteLine($"Result: {(bundlePath != null ? "FOUND" : "NOT FOUND")}");
+                writer.WriteLine("");
+                return bundlePath != null;
+            } catch (Exception ex) {
+                File.AppendAllText(debugPath, $"[EXCEPTION] {DateTime.UtcNow:o} - {ex}\n");
+                return false;
             }
-            return bundlePath != null;
         }
 
         private async Task<string> DownloadExtensionBundleAsync(string version, HttpClient httpClient)
@@ -340,40 +388,57 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
 
         public async Task<string> GetExtensionBundleBinPathAsync()
         {
-            string bundlePath = await GetExtensionBundlePath();
-
-            if (string.IsNullOrEmpty(bundlePath))
+            string debugPath = "/tmp/get-extension-bundle-path.txt";
+            try
             {
+                using var writer = new StreamWriter(debugPath, append: true);
+
+                writer.WriteLine("=== Starting Extension Bundle Locating Process===");
+                string bundlePath = await GetExtensionBundlePath();
+
+                if (string.IsNullOrEmpty(bundlePath))
+                {
+                    writer.WriteLine("Could not resolve bundle path");
+                    return null;
+                }
+                writer.WriteLine($"Resolved bundle path is {bundlePath}");
+
+                string binPath = string.Empty;
+
+                if (_environment.IsWindowsAzureManagedHosting())
+                {
+                    writer.WriteLine("Found architecture as Windows Azure Managed hosting");
+                    if (Environment.Is64BitProcess)
+                    {
+                        //bin_v3/win-x64
+                        binPath = Path.Combine(bundlePath, ScriptConstants.ExtensionBundleV3BinDirectoryName, ScriptConstants.Windows64BitRID);
+                    }
+                    else
+                    {
+                        //bin_v3/win-x86
+                        binPath = Path.Combine(bundlePath, ScriptConstants.ExtensionBundleV3BinDirectoryName, ScriptConstants.Windows32BitRID);
+                    }
+                }
+
+                if (_environment.IsLinuxAzureManagedHosting())
+                {
+                    writer.WriteLine("Found architecture as Linux Azure Managed hosting");
+                    // linux only has 64 bit version of process - bin_v3/linux-x64
+                    binPath = Path.Combine(bundlePath, ScriptConstants.ExtensionBundleV3BinDirectoryName, ScriptConstants.Linux64BitRID);
+                    writer.WriteLine($"Bin path is {binPath}");
+                }
+
+                // Check if RR direcory exist if not fallback to non RR binaries
+                binPath = FileUtility.DirectoryExists(binPath) ? binPath : Path.Combine(bundlePath, "bin");
+                writer.WriteLine($"Bin_v3 path does not exist, moving to bin: {binPath}");
+
+                // if no bin directory is present something is wrong
+                return FileUtility.DirectoryExists(binPath) ? binPath : null; 
+            } catch (Exception ex) 
+            {
+                File.AppendAllText("/tmp/startup-extension-debug.txt", $"[EXCEPTION] {ex}\n");
                 return null;
             }
-
-            string binPath = string.Empty;
-
-            if (_environment.IsWindowsAzureManagedHosting())
-            {
-                if (Environment.Is64BitProcess)
-                {
-                    //bin_v3/win-x64
-                    binPath = Path.Combine(bundlePath, ScriptConstants.ExtensionBundleV3BinDirectoryName, ScriptConstants.Windows64BitRID);
-                }
-                else
-                {
-                    //bin_v3/win-x86
-                    binPath = Path.Combine(bundlePath, ScriptConstants.ExtensionBundleV3BinDirectoryName, ScriptConstants.Windows32BitRID);
-                }
-            }
-
-            if (_environment.IsLinuxAzureManagedHosting())
-            {
-                // linux only has 64 bit version of process - bin_v3/linux-x64
-                binPath = Path.Combine(bundlePath, ScriptConstants.ExtensionBundleV3BinDirectoryName, ScriptConstants.Linux64BitRID);
-            }
-
-            // Check if RR direcory exist if not fallback to non RR binaries
-            binPath = FileUtility.DirectoryExists(binPath) ? binPath : Path.Combine(bundlePath, "bin");
-
-            // if no bin directory is present something is wrong
-            return FileUtility.DirectoryExists(binPath) ? binPath : null;
         }
     }
 }
