@@ -368,7 +368,8 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
 
                 writer.WriteLine($"Final resolved version: {matchingVersion}");
                 writer.WriteLine();
-                return matchingVersion?.ToString();
+                // return matchingVersion?.ToString();
+                return matchingVersion.ToNormalizedString();
             } catch (Exception ex) {
                 File.AppendAllText(debugPath, $"[EXCEPTION] {DateTime.UtcNow:o} - {ex}\n");
                 return null;
