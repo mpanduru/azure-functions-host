@@ -300,45 +300,79 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
 
         internal string FindBestVersionMatch(VersionRange versionRange, IEnumerable<string> versions, string bundleId, FunctionsHostingConfigOptions configOption)
         {
-            var bundleVersions = versions.Select(p =>
+            string debugPath = "/tmp/find-version-debug.txt";
+            try
             {
-                var dirName = Path.GetFileName(p);
-                NuGetVersion.TryParse(dirName, out NuGetVersion version);
-                if (version != null)
+                using var writer = new StreamWriter(debugPath, append: true);
+                writer.WriteLine("=== FindBestVersionMatch ===");
+                writer.WriteLine($"Bundle ID: {bundleId}");
+                writer.WriteLine($"Version range: {versionRange?.ToNormalizedString() ?? "(null)"}");
+                writer.WriteLine("Raw version directories:");
+                foreach (var v in versions)
                 {
-                    version = versionRange.Satisfies(version) ? version : null;
+                    writer.WriteLine($" - {v}");
                 }
-                return version;
-            }).Where(v => v != null).OrderByDescending(version => version.Version).ToList();
+            
+                var bundleVersions = versions.Select(p =>
+                {
+                    var dirName = Path.GetFileName(p);
+                    NuGetVersion.TryParse(dirName, out NuGetVersion version);
+                    if (version != null)
+                    {
+                        bool satisfies = versionRange?.Satisfies(version) ?? false;
+                        writer.WriteLine($"Parsed version: {version}, satisfies range: {satisfies}");
+                        version = satisfies ? version : null;
+                    }
+                    writer.WriteLine($"Final version is {version}");
+                    return version;
+                }).Where(v => v != null).OrderByDescending(version => version.Version).ToList();
 
-            var matchingVersion = ResolvePlatformReleaseChannelVersion(bundleVersions);
+                var matchingVersion = ResolvePlatformReleaseChannelVersion(bundleVersions);
+                writer.WriteLine($"Initial matching version: {matchingVersion}");
 
-            if (bundleId != ScriptConstants.DefaultExtensionBundleId)
-            {
+                if (bundleId != ScriptConstants.DefaultExtensionBundleId)
+                {
+                    writer.WriteLine($"Custom bundle ID detected, returning: {matchingVersion}");
+                    return matchingVersion?.ToString();
+                }
+
+                // Check to see if there is a max bundle version set via hosting configuration, if yes then use that instead of the one
+                // available on VM or local machine. Only use MaximumBundleV3Version or MaximumBundleV4Version if the version configured
+                // by the customer resolved to version higher than the version set via hosting config.
+                writer.WriteLine($"MaxV3: {configOption.MaximumBundleV3Version} - MatchingVersion: {matchingVersion}");
+                if (!string.IsNullOrEmpty(configOption.MaximumBundleV3Version)
+                    && matchingVersion?.Major == ScriptConstants.ExtensionBundleV3MajorVersion)
+                {
+                    var maximumBundleV3Version = NuGetVersion.Parse(configOption.MaximumBundleV3Version);
+                    writer.WriteLine($"Max V3 allowed: {maximumBundleV3Version}");
+                    bool checker = matchingVersion > maximumBundleV3Version;
+                    writer.WriteLine($"Checker returned: {checker}");
+                    matchingVersion = checker ? maximumBundleV3Version : matchingVersion;
+                    writer.WriteLine($"Matching Version is: {matchingVersion}");
+                    return matchingVersion?.ToString();
+                }
+
+                writer.WriteLine($"MaxV4: {configOption.MaximumBundleV4Version} - MatchingVersion: {matchingVersion}");
+                if (!string.IsNullOrEmpty(configOption.MaximumBundleV4Version)
+                    && matchingVersion?.Major == ScriptConstants.ExtensionBundleV4MajorVersion)
+                {
+                    var maximumBundleV4Version = NuGetVersion.Parse(configOption.MaximumBundleV4Version);
+                    writer.WriteLine($"Max V4 allowed: {maximumBundleV4Version}");
+                    bool checker = matchingVersion > maximumBundleV4Version;
+                    writer.WriteLine($"V3 checker: {checker}");
+                    matchingVersion = matchingVersion > maximumBundleV4Version
+                                    ? maximumBundleV4Version
+                                    : matchingVersion;
+                    writer.WriteLine($"Matching Version is: {matchingVersion}");
+                }
+
+                writer.WriteLine($"Final resolved version: {matchingVersion}");
+                writer.WriteLine();
                 return matchingVersion?.ToString();
+            } catch (Exception ex) {
+                File.AppendAllText(debugPath, $"[EXCEPTION] {DateTime.UtcNow:o} - {ex}\n");
+                return null;
             }
-
-            // Check to see if there is a max bundle version set via hosting configuration, if yes then use that instead of the one
-            // available on VM or local machine. Only use MaximumBundleV3Version or MaximumBundleV4Version if the version configured
-            // by the customer resolved to version higher than the version set via hosting config.
-            if (!string.IsNullOrEmpty(configOption.MaximumBundleV3Version)
-                && matchingVersion?.Major == ScriptConstants.ExtensionBundleV3MajorVersion)
-            {
-                var maximumBundleV3Version = NuGetVersion.Parse(configOption.MaximumBundleV3Version);
-                matchingVersion = matchingVersion > maximumBundleV3Version ? maximumBundleV3Version : matchingVersion;
-                return matchingVersion?.ToString();
-            }
-
-            if (!string.IsNullOrEmpty(configOption.MaximumBundleV4Version)
-                && matchingVersion?.Major == ScriptConstants.ExtensionBundleV4MajorVersion)
-            {
-                var maximumBundleV4Version = NuGetVersion.Parse(configOption.MaximumBundleV4Version);
-                matchingVersion = matchingVersion > maximumBundleV4Version
-                                ? maximumBundleV4Version
-                                : matchingVersion;
-            }
-
-            return matchingVersion?.ToString();
         }
 
         private NuGetVersion ResolvePlatformReleaseChannelVersion(IList<NuGetVersion> orderedByDescBundles) => _platformReleaseChannel.ToUpper() switch
